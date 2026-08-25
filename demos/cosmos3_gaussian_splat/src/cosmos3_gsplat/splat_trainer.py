@@ -84,7 +84,14 @@ class GaussianSplatTrainer:
             raise RuntimeError("Gaussian training requires the package's 'gpu' optional dependencies") from error
         if not torch.cuda.is_available():
             raise RuntimeError("Gaussian splat training requires a CUDA GPU")
-        if not gsplat.has_3dgs():
+        has_3dgs = getattr(gsplat, "has_3dgs", None)
+        if callable(has_3dgs):
+            cuda_kernels_available = bool(has_3dgs())
+        else:
+            from gsplat.cuda._backend import _C
+
+            cuda_kernels_available = _C is not None
+        if not cuda_kernels_available:
             raise RuntimeError("gsplat CUDA kernels are unavailable; use a CUDA devel image with nvcc")
 
         root = Path(output_dir)

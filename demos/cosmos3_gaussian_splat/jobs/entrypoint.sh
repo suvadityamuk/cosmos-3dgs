@@ -45,7 +45,9 @@ import gsplat
 import torch
 from gsplat.cuda._backend import _C
 
-if not torch.cuda.is_available() or not gsplat.has_3dgs() or _C is None:
+has_3dgs = getattr(gsplat, "has_3dgs", None)
+available = bool(has_3dgs()) if callable(has_3dgs) else _C is not None
+if not torch.cuda.is_available() or not available or _C is None:
     raise RuntimeError("gsplat CUDA preflight failed")
 print("gsplat CUDA preflight complete:", torch.cuda.get_device_name(0), torch.version.cuda)
 PY
