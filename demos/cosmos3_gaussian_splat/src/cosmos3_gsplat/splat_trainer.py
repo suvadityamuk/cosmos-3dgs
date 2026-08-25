@@ -51,22 +51,64 @@ def _skew(vectors):
     return torch.stack((zeros, -z, y, z, zeros, -x, -y, x, zeros), dim=-1).reshape(*vectors.shape[:-1], 3, 3)
 
 
-def _ssim_loss(predicted, target):
-    """Differentiable SSIM loss for BCHW tensors."""
+_SSIM_WINDOW_CACHE: dict[tuple, object] = {}
 
-    import torch
+
+def _l1_loss(predicted, target):
     import torch.nn.functional as functional
 
-    mu_predicted = functional.avg_pool2d(predicted, kernel_size=11, stride=1, padding=5)
-    mu_target = functional.avg_pool2d(target, kernel_size=11, stride=1, padding=5)
-    variance_predicted = functional.avg_pool2d(predicted * predicted, 11, 1, 5) - mu_predicted.square()
-    variance_target = functional.avg_pool2d(target * target, 11, 1, 5) - mu_target.square()
-    covariance = functional.avg_pool2d(predicted * target, 11, 1, 5) - mu_predicted * mu_target
+    return functional.l1_loss(predicted, target, reduction="none")
+
+
+def _create_ssim_window(window_size, channels, device, dtype):
+    import torch
+
+    positions = torch.arange(window_size, device=device, dtype=torch.float32)
+    gaussian = torch.exp(-((positions - window_size // 2) ** 2) / (2 * 1.5**2))
+    gaussian = gaussian / gaussian.sum()
+    window_2d = gaussian.unsqueeze(1).mm(gaussian.unsqueeze(0)).float()
+    return window_2d.unsqueeze(0).unsqueeze(0).expand(channels, 1, window_size, window_size).contiguous().to(dtype)
+
+
+def _torch_ssim_map(image1, image2, window, window_size, channels):
+    import torch.nn.functional as functional
+
+    padding = window_size // 2
+    mean1 = functional.conv2d(image1, window, padding=padding, groups=channels)
+    mean2 = functional.conv2d(image2, window, padding=padding, groups=channels)
+    mean1_squared = mean1.pow(2)
+    mean2_squared = mean2.pow(2)
+    mean_product = mean1 * mean2
+    variance1 = functional.conv2d(image1 * image1, window, padding=padding, groups=channels) - mean1_squared
+    variance2 = functional.conv2d(image2 * image2, window, padding=padding, groups=channels) - mean2_squared
+    covariance = functional.conv2d(image1 * image2, window, padding=padding, groups=channels) - mean_product
     c1, c2 = 0.01**2, 0.03**2
-    ssim = ((2 * mu_predicted * mu_target + c1) * (2 * covariance + c2)) / (
-        (mu_predicted.square() + mu_target.square() + c1) * (variance_predicted + variance_target + c2)
+    return ((2 * mean_product + c1) * (2 * covariance + c2)) / (
+        (mean1_squared + mean2_squared + c1) * (variance1 + variance2 + c2)
     )
-    return 1.0 - torch.mean(ssim)
+
+
+def _ssim_loss(image1, image2, window_size=11):
+    """Numerically identical fallback to gsplat main's ``ssim_loss``."""
+
+    try:
+        from fused_ssim import fused_ssim
+
+        if window_size == 11 and not image2.requires_grad and not image1.is_cpu:
+            return 1.0 - fused_ssim(image1, image2, padding="valid")
+    except (ImportError, NotImplementedError):
+        pass
+    channels = image1.shape[1]
+    key = (window_size, channels, image1.device, image1.dtype)
+    if key not in _SSIM_WINDOW_CACHE:
+        _SSIM_WINDOW_CACHE[key] = _create_ssim_window(
+            window_size,
+            channels,
+            image1.device,
+            image1.dtype,
+        )
+    window = _SSIM_WINDOW_CACHE[key]
+    return 1.0 - _torch_ssim_map(image1, image2, window, window_size, channels).mean()
 
 
 def _corrected_c2w(base_c2w, pose_delta):
@@ -224,7 +266,7 @@ class GaussianSplatTrainer:
                 strategy.step_pre_backward(parameters, optimizers, strategy_state, step, info)
                 predicted_rgb = rendered[..., :3]
                 target_rgb = images[image_index : image_index + 1]
-                rgb_l1 = torch.mean(torch.abs(predicted_rgb - target_rgb))
+                rgb_l1 = _l1_loss(predicted_rgb, target_rgb).mean()
                 rgb_ssim = _ssim_loss(
                     predicted_rgb.permute(0, 3, 1, 2),
                     target_rgb.permute(0, 3, 1, 2),
