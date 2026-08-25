@@ -224,7 +224,7 @@ class Cosmos3GaussianSplatPipeline:
             generated_video=existing(layout.generated / "cosmos_orbit.mp4"),
             cameras_path=existing(layout.geometry / "reconstruction" / "reconstruction.npz"),
             point_cloud_path=existing(layout.geometry / "vggt" / "vggt_points.ply"),
-            splat_path=existing(layout.splat / "splat.ply"),
+            splat_path=existing(layout.splat / "gaussian_splat.ply") or existing(layout.splat / "splat.ply"),
             render_video=existing(layout.splat / "render_orbit.mp4"),
             metrics_path=existing(layout.report / "metrics.json"),
             report_path=existing(layout.report / "index.html"),

@@ -102,6 +102,8 @@ hf://buckets/<namespace>/<bucket>/runs/<run-id>/
 │   ├── vggt/
 │   └── reconstruction/
 ├── splat/
+│   ├── gaussian_splat.ply
+│   ├── gaussian_splat.splat
 │   ├── splat.ply
 │   ├── splat.pt
 │   ├── render_orbit.mp4

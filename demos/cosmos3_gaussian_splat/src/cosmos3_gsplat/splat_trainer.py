@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -324,7 +325,7 @@ class GaussianSplatTrainer:
         corrected_k[:, 0, 0] *= torch.exp(log_focal.detach())
         corrected_k[:, 1, 1] *= torch.exp(log_focal.detach())
         shn = torch.empty((len(parameters["means"]), 0, 3), device=device)
-        splat_path = root / "splat.ply"
+        gaussian_ply_path = root / "gaussian_splat.ply"
         export_splats(
             means=parameters["means"].detach(),
             scales=parameters["scales"].detach(),
@@ -333,7 +334,20 @@ class GaussianSplatTrainer:
             sh0=parameters["sh0"].detach(),
             shN=shn,
             format="ply",
-            save_to=str(splat_path),
+            save_to=str(gaussian_ply_path),
+        )
+        legacy_splat_path = root / "splat.ply"
+        shutil.copy2(gaussian_ply_path, legacy_splat_path)
+        compact_splat_path = root / "gaussian_splat.splat"
+        export_splats(
+            means=parameters["means"].detach(),
+            scales=parameters["scales"].detach(),
+            quats=torch.nn.functional.normalize(parameters["quats"].detach(), dim=-1),
+            opacities=parameters["opacities"].detach(),
+            sh0=parameters["sh0"].detach(),
+            shN=shn,
+            format="splat",
+            save_to=str(compact_splat_path),
         )
         checkpoint_path = root / "splat.pt"
         torch.save(
@@ -376,7 +390,10 @@ class GaussianSplatTrainer:
         release_gpu_memory()
         return GaussianSplatResult(
             artifacts={
-                "splat": str(splat_path),
+                "splat": str(gaussian_ply_path),
+                "splat_ply": str(gaussian_ply_path),
+                "splat_compact": str(compact_splat_path),
+                "splat_legacy_ply": str(legacy_splat_path),
                 "checkpoint": str(checkpoint_path),
                 "render": str(render_path),
                 "commanded_render": str(commanded_render_path),
