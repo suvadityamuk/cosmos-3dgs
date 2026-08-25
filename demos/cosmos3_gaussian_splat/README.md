@@ -139,3 +139,24 @@ The report includes:
 
 Classical SfM is intentionally diagnostic rather than blocking: generated views can violate rigid
 multi-view assumptions even when VGGT produces a usable dense initialization.
+
+## Camera-control boundary found during validation
+
+The released `camera_pose` example is a far-field fly-through: about 53 m of translation with only
+~0.27 degrees of rotation per frame. A 60-action 360-degree object orbit requires ~6 degrees per
+frame, well outside that distribution. Runtime controls confirmed:
+
+- NVIDIA's exact lighthouse example produces stable, sustained forward camera motion.
+- A chair test preserving the example translations and using an in-range 0.25-degree yaw per frame
+  preserves identity but still collapses to a nearly static wobble with no useful parallax.
+
+This is a model capability boundary, not action serialization: action files match the submitted
+A100 tensors, integrate back to the requested poses, and use the documented rot6d/backward-framewise
+convention. Smoothing or reducing the orbit stabilizes appearance only by removing viewpoint change.
+Do not launch a long splat optimization unless a generation smoke test first demonstrates real
+wide-baseline parallax.
+
+For a true single-image object orbit, use a multiview-specific generator or a geometry-guided
+render/inpaint loop, or fine-tune Cosmos on near-field object-centric trajectories. The two-case
+control is implemented by `python -m cosmos3_gsplat.camera_diagnostics` and
+`jobs/camera_diagnostics.sh`.
