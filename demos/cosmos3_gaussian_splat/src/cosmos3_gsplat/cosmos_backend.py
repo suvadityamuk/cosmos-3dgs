@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +14,36 @@ from PIL import Image
 from .config import GenerationConfig
 from .telemetry import measure_stage, release_gpu_memory
 from .trajectory import CameraTrajectory
+
+
+def _materialize_guardrail_nltk_data(token: str | None) -> Path:
+    """Copy gated NLTK data out of the Hub's symlink cache.
+
+    NLTK 3.10's TOCTOU protection intentionally refuses to open symlinks. Hub
+    snapshots are symlink trees, so the Cosmos guardrail tokenizer data must be
+    materialized before text safety checks run.
+    """
+
+    import nltk
+    from huggingface_hub import snapshot_download
+
+    snapshot = Path(snapshot_download("nvidia/Cosmos-1.0-Guardrail", token=token))
+    source = snapshot / "blocklist" / "nltk_data"
+    if not source.is_dir():
+        raise FileNotFoundError(f"Guardrail NLTK data not found under {source}")
+    destination = Path(os.environ.get("COSMOS_GUARDRAIL_NLTK_DATA", "/tmp/cosmos-guardrail-nltk-data"))
+    if not destination.is_dir():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix="cosmos-guardrail-nltk-", dir=destination.parent))
+        try:
+            shutil.copytree(source, temporary / "nltk_data", symlinks=False)
+            (temporary / "nltk_data").replace(destination)
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+    resolved = str(destination.resolve())
+    if resolved not in nltk.data.path:
+        nltk.data.path.insert(0, resolved)
+    return destination
 
 
 @dataclass(frozen=True)
@@ -100,6 +132,8 @@ class CosmosCameraGenerator:
                     enable_safety_checker=self.config.enable_guardrails,
                     token=token,
                 )
+                if self.config.enable_guardrails:
+                    _materialize_guardrail_nltk_data(token)
                 pipe.scheduler = UniPCMultistepScheduler.from_config(
                     pipe.scheduler.config,
                     flow_shift=self.config.flow_shift,
