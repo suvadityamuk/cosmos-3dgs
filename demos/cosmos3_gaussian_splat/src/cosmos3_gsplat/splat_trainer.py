@@ -51,6 +51,24 @@ def _skew(vectors):
     return torch.stack((zeros, -z, y, z, zeros, -x, -y, x, zeros), dim=-1).reshape(*vectors.shape[:-1], 3, 3)
 
 
+def _ssim_loss(predicted, target):
+    """Differentiable SSIM loss for BCHW tensors."""
+
+    import torch
+    import torch.nn.functional as functional
+
+    mu_predicted = functional.avg_pool2d(predicted, kernel_size=11, stride=1, padding=5)
+    mu_target = functional.avg_pool2d(target, kernel_size=11, stride=1, padding=5)
+    variance_predicted = functional.avg_pool2d(predicted * predicted, 11, 1, 5) - mu_predicted.square()
+    variance_target = functional.avg_pool2d(target * target, 11, 1, 5) - mu_target.square()
+    covariance = functional.avg_pool2d(predicted * target, 11, 1, 5) - mu_predicted * mu_target
+    c1, c2 = 0.01**2, 0.03**2
+    ssim = ((2 * mu_predicted * mu_target + c1) * (2 * covariance + c2)) / (
+        (mu_predicted.square() + mu_target.square() + c1) * (variance_predicted + variance_target + c2)
+    )
+    return 1.0 - torch.mean(ssim)
+
+
 def _corrected_c2w(base_c2w, pose_delta):
     import torch
 
@@ -77,7 +95,6 @@ class GaussianSplatTrainer:
             import gsplat
             import torch
             from gsplat import export_splats
-            from gsplat.losses import l1_loss, ssim_loss
             from gsplat.rendering import rasterization
             from gsplat.strategy import DefaultStrategy
         except ImportError as error:
@@ -207,8 +224,11 @@ class GaussianSplatTrainer:
                 strategy.step_pre_backward(parameters, optimizers, strategy_state, step, info)
                 predicted_rgb = rendered[..., :3]
                 target_rgb = images[image_index : image_index + 1]
-                rgb_l1 = l1_loss(predicted_rgb, target_rgb).mean()
-                rgb_ssim = ssim_loss(predicted_rgb.permute(0, 3, 1, 2), target_rgb.permute(0, 3, 1, 2))
+                rgb_l1 = torch.mean(torch.abs(predicted_rgb - target_rgb))
+                rgb_ssim = _ssim_loss(
+                    predicted_rgb.permute(0, 3, 1, 2),
+                    target_rgb.permute(0, 3, 1, 2),
+                )
                 loss = torch.lerp(rgb_l1, rgb_ssim, self.config.ssim_weight)
                 predicted_depth = rendered[..., 3]
                 target_depth = depths[image_index]
