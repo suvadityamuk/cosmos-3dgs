@@ -159,6 +159,9 @@ class GaussianSplatTrainer:
         log_focal = torch.nn.Parameter(torch.zeros((), device=device))
         pose_optimizer = torch.optim.Adam([pose_delta], lr=self.config.pose_learning_rate)
         focal_optimizer = torch.optim.Adam([log_focal], lr=self.config.focal_learning_rate)
+        effective_pose_prior_weight = self.config.pose_prior_weight * (
+            1.0 if geometry.metrics.get("pose_prior_reliable", False) else 0.01
+        )
         holdout = np.arange(len(images)) % self.config.holdout_stride == 0
         train_indices = np.flatnonzero(~holdout)
         if len(train_indices) == 0:
@@ -210,7 +213,7 @@ class GaussianSplatTrainer:
                     loss = loss + self.config.depth_loss_weight * depth_l1 / scene_scale
                 center_prior = torch.nn.functional.smooth_l1_loss(corrected_c2w[:, :3, 3], command_c2w[:, :3, 3])
                 rotation_prior = torch.mean(torch.square(corrected_c2w[:, :3, :3] - command_c2w[:, :3, :3]))
-                loss = loss + self.config.pose_prior_weight * (center_prior + rotation_prior)
+                loss = loss + effective_pose_prior_weight * (center_prior + rotation_prior)
                 loss.backward()
                 for optimizer in (*optimizers.values(), pose_optimizer):
                     optimizer.step()
@@ -295,6 +298,7 @@ class GaussianSplatTrainer:
                 "initial_splats": count,
                 "final_splats": len(parameters["means"]),
                 "focal_scale": float(torch.exp(log_focal.detach())),
+                "effective_pose_prior_weight": effective_pose_prior_weight,
                 **evaluation,
             }
         )

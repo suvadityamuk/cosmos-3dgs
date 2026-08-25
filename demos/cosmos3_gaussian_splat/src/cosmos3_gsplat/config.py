@@ -10,9 +10,9 @@ from typing import Any
 class TrajectoryConfig:
     """Configuration for the closed object-centric camera trajectory."""
 
-    radius_m: float = 1.5
-    elevation_amplitude_deg: float = 20.0
-    turns: float = 2.0
+    radius_m: float = 1.0
+    elevation_amplitude_deg: float = 12.0
+    turns: float = 1.0
     num_actions: int = 60
     target_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
 

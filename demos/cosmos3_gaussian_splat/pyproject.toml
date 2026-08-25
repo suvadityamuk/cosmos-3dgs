@@ -30,7 +30,7 @@ gpu = [
   "lightglue",
   "omegaconf>=2.3.1",
   "opencv-python-headless>=4.11.0",
-  "pycolmap>=3.13.0",
+  "pycolmap==3.10.0",
   "torch>=2.7.0",
   "torchvision>=0.22.0",
   "transformers>=5.11.0",

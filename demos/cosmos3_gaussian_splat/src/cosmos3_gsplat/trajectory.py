@@ -127,11 +127,10 @@ def actions_to_poses(raw_actions: np.ndarray, initial_pose_c2w: np.ndarray | Non
 
 
 def make_closed_helical_trajectory(config: TrajectoryConfig) -> CameraTrajectory:
-    """Create a closed, two-turn-by-default orbit with sinusoidal elevation.
+    """Create a closed orbit with sinusoidal elevation.
 
-    The elevation completes one sinusoid while azimuth completes ``turns`` turns.
-    With the default two turns this visits eye-level, high, eye-level, low, then
-    closes at eye-level and the original azimuth.
+    The elevation completes one sinusoid while azimuth completes ``turns`` turns,
+    visiting eye-level, high, eye-level, low, then closing at the initial pose.
     """
 
     frame_count = config.num_actions + 1

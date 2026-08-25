@@ -352,13 +352,20 @@ class VGGTBackend:
         aligned_c2w = similarity.transform_c2w(predicted_c2w)
         aligned_points = similarity.transform_points(points_np)
         rotation_residuals = rotation_geodesic_degrees(aligned_c2w[:, :3, :3], selected_commands[:, :3, :3])
-        accepted = (similarity.residuals <= self.config.max_center_residual_ratio * command_extent) & (
+        within_command_bounds = (similarity.residuals <= self.config.max_center_residual_ratio * command_extent) & (
             rotation_residuals <= self.config.max_rotation_residual_deg
         )
-        if int(accepted.sum()) < min(self.config.min_accepted_views, len(indices)):
+        finite_views = (
+            np.isfinite(predicted_c2w).all(axis=(1, 2))
+            & np.isfinite(intrinsics_np).all(axis=(1, 2))
+            & np.isfinite(depths_np).all(axis=tuple(range(1, depths_np.ndim)))
+        )
+        required_views = min(self.config.min_accepted_views, len(indices))
+        pose_prior_reliable = int(within_command_bounds.sum()) >= required_views
+        accepted = within_command_bounds if pose_prior_reliable else finite_views
+        if int(accepted.sum()) < required_views:
             raise RuntimeError(
-                f"Only {int(accepted.sum())}/{len(indices)} VGGT views passed pose checks; "
-                f"need {min(self.config.min_accepted_views, len(indices))}"
+                f"Only {int(accepted.sum())}/{len(indices)} VGGT views are finite; need {required_views}"
             )
 
         if images_np.min() < 0:
@@ -402,6 +409,9 @@ class VGGTBackend:
                 "geometry_model": self.config.model_id,
                 "geometry_model_revision": self.config.model_revision,
                 "accepted_views": int(accepted.sum()),
+                "views_within_command_bounds": int(within_command_bounds.sum()),
+                "pose_prior_reliable": pose_prior_reliable,
+                "pose_gate_fallback": not pose_prior_reliable,
                 "sim3_scale": similarity.scale,
                 "center_residual_median": float(np.median(similarity.residuals)),
                 "center_residual_max": float(similarity.residuals.max()),

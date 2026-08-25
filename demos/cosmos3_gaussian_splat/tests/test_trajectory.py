@@ -16,8 +16,8 @@ def test_closed_trajectory_and_expected_shape() -> None:
     assert trajectory.raw_actions.shape == (60, 9)
     np.testing.assert_allclose(trajectory.poses_c2w[0], trajectory.poses_c2w[-1], atol=1e-5)
     np.testing.assert_allclose(trajectory.elevation_deg[[0, -1]], 0.0, atol=1e-5)
-    assert trajectory.elevation_deg.max() > 19.0
-    assert trajectory.elevation_deg.min() < -19.0
+    assert trajectory.elevation_deg.max() > 11.0
+    assert trajectory.elevation_deg.min() < -11.0
 
 
 def test_pose_action_round_trip() -> None:
