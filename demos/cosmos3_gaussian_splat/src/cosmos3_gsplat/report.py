@@ -69,6 +69,7 @@ def build_report(layout: RunLayout) -> ReportResult:
     )
     generated_video = layout.generated / "cosmos_orbit.mp4"
     render_video = layout.splat / "render_orbit.mp4"
+    commanded_render_video = layout.splat / "render_commanded_orbit.mp4"
     comparison_video = layout.splat / "generated_vs_splat.mp4"
     splat_path = layout.splat / "splat.ply"
     html = Template(
@@ -93,7 +94,11 @@ def build_report(layout: RunLayout) -> ReportResult:
   <img src="{{ trajectory }}" alt="Commanded and VGGT-aligned camera trajectories">
   <div class="grid">
     <section><h2>Cosmos generated orbit</h2><video controls loop src="{{ generated }}"></video></section>
-    <section><h2>Splat render</h2><video controls loop src="{{ render }}"></video></section>
+    <section><h2>Splat render at refined cameras</h2><video controls loop src="{{ render }}"></video></section>
+    <section>
+      <h2>Splat render at commanded cameras</h2>
+      <video controls loop src="{{ commanded_render }}"></video>
+    </section>
   </div>
   <section><h2>Generated vs. reconstructed</h2><video controls loop src="{{ comparison }}"></video></section>
   <p><a href="{{ splat }}">Download Gaussian splat PLY</a></p>
@@ -107,6 +112,7 @@ def build_report(layout: RunLayout) -> ReportResult:
         trajectory=_relative(trajectory_path, layout.report),
         generated=_relative(generated_video, layout.report),
         render=_relative(render_video, layout.report),
+        commanded_render=_relative(commanded_render_video, layout.report),
         comparison=_relative(comparison_video, layout.report),
         splat=_relative(splat_path, layout.report),
         metrics=metrics,

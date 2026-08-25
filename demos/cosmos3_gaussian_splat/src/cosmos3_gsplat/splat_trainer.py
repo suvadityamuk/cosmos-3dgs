@@ -257,9 +257,10 @@ class GaussianSplatTrainer:
             },
             checkpoint_path,
         )
-        render_path, side_by_side_path, evaluation = self._render_outputs(
+        render_path, commanded_render_path, side_by_side_path, evaluation = self._render_outputs(
             parameters=parameters,
             poses_c2w=corrected_c2w,
+            commanded_poses_c2w=command_c2w,
             intrinsics=corrected_k,
             images=images,
             holdout=holdout,
@@ -289,6 +290,7 @@ class GaussianSplatTrainer:
                 "splat": str(splat_path),
                 "checkpoint": str(checkpoint_path),
                 "render": str(render_path),
+                "commanded_render": str(commanded_render_path),
                 "comparison": str(side_by_side_path),
                 "metrics": str(metrics_path),
             },
@@ -300,6 +302,7 @@ class GaussianSplatTrainer:
         *,
         parameters,
         poses_c2w,
+        commanded_poses_c2w,
         intrinsics,
         images,
         holdout: np.ndarray,
@@ -308,10 +311,11 @@ class GaussianSplatTrainer:
         fps: int,
         output_dir: Path,
         rasterization,
-    ) -> tuple[Path, Path, dict[str, float]]:
+    ) -> tuple[Path, Path, Path, dict[str, float]]:
         import torch
 
         renders: list[np.ndarray] = []
+        commanded_renders: list[np.ndarray] = []
         comparisons: list[np.ndarray] = []
         heldout_mse: list[float] = []
         with torch.inference_mode():
@@ -337,10 +341,26 @@ class GaussianSplatTrainer:
                 target_np = (target.cpu().numpy() * 255).astype(np.uint8)
                 renders.append(predicted_np)
                 comparisons.append(np.concatenate((target_np, predicted_np), axis=1))
+                commanded, _, _ = rasterization(
+                    means=parameters["means"],
+                    quats=torch.nn.functional.normalize(parameters["quats"], dim=-1),
+                    scales=torch.exp(parameters["scales"]),
+                    opacities=torch.sigmoid(parameters["opacities"]),
+                    colors=parameters["sh0"],
+                    viewmats=torch.linalg.inv(commanded_poses_c2w[index : index + 1]),
+                    Ks=intrinsics[index : index + 1],
+                    width=width,
+                    height=height,
+                    packed=True,
+                    sh_degree=0,
+                )
+                commanded_renders.append((commanded[0].clamp(0, 1).cpu().numpy() * 255).astype(np.uint8))
         render_path = output_dir / "render_orbit.mp4"
+        commanded_render_path = output_dir / "render_commanded_orbit.mp4"
         comparison_path = output_dir / "generated_vs_splat.mp4"
         iio.imwrite(render_path, np.stack(renders), fps=fps, codec="libx264")
+        iio.imwrite(commanded_render_path, np.stack(commanded_renders), fps=fps, codec="libx264")
         iio.imwrite(comparison_path, np.stack(comparisons), fps=fps, codec="libx264")
         mean_mse = float(np.mean(heldout_mse)) if heldout_mse else float("nan")
         psnr = -10.0 * math.log10(max(mean_mse, 1e-12)) if heldout_mse else float("nan")
-        return render_path, comparison_path, {"heldout_mse": mean_mse, "heldout_psnr": psnr}
+        return render_path, commanded_render_path, comparison_path, {"heldout_mse": mean_mse, "heldout_psnr": psnr}

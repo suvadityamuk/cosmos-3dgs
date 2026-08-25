@@ -5,6 +5,7 @@ from PIL import Image
 from scipy.spatial.transform import Rotation
 
 from cosmos3_gsplat.geometry import (
+    invert_poses,
     robust_similarity_alignment,
     rotation_geodesic_degrees,
     select_keyframes,
@@ -33,6 +34,14 @@ def test_rotation_geodesic() -> None:
     identity = np.eye(3)[None]
     quarter_turn = Rotation.from_euler("z", 90, degrees=True).as_matrix()[None]
     np.testing.assert_allclose(rotation_geodesic_degrees(identity, quarter_turn), [90.0], atol=1e-6)
+
+
+def test_invert_vggt_three_by_four_extrinsics() -> None:
+    w2c = np.eye(4)[None]
+    w2c[0, :3, 3] = [1.0, 2.0, 3.0]
+    c2w = invert_poses(w2c[:, :3])
+    assert c2w.shape == (1, 4, 4)
+    np.testing.assert_allclose(c2w[0, :3, 3], [-1.0, -2.0, -3.0])
 
 
 def test_keyframes_keep_closure_and_filter_blurry_images(tmp_path: Path) -> None:

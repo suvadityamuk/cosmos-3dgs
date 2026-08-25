@@ -41,6 +41,114 @@ def write_point_cloud_ply(path: str | Path, points: np.ndarray, colors: np.ndarr
     return destination
 
 
+def _load_vggt_padded_mask(path: str | Path, target_size: int = 518) -> np.ndarray:
+    image = Image.open(path).convert("L")
+    width, height = image.size
+    if width >= height:
+        resized_width = target_size
+        resized_height = round(height * (target_size / width) / 14) * 14
+    else:
+        resized_height = target_size
+        resized_width = round(width * (target_size / height) / 14) * 14
+    resized = image.resize((resized_width, resized_height), Image.Resampling.NEAREST)
+    canvas = Image.new("L", (target_size, target_size), 0)
+    canvas.paste(resized, ((target_size - resized_width) // 2, (target_size - resized_height) // 2))
+    return np.asarray(canvas) >= 128
+
+
+def _run_vggt_bundle_adjustment(
+    *,
+    images,
+    depth_confidence: np.ndarray,
+    points_3d: np.ndarray,
+    extrinsics_w2c: np.ndarray,
+    intrinsics: np.ndarray,
+    output_dir: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float | int | str | bool]] | None:
+    """Use VGGT's official track predictor and PyCOLMAP conversion for one BA pass."""
+
+    try:
+        import pycolmap
+        import torch
+        from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap
+        from vggt.dependency.track_predict import predict_tracks
+    except ImportError:
+        return None
+    try:
+        with (
+            torch.inference_mode(),
+            torch.autocast(
+                "cuda", dtype=torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+            ),
+        ):
+            tracks, visibility, _, track_points, track_colors = predict_tracks(
+                images,
+                conf=depth_confidence,
+                points_3d=points_3d,
+                masks=None,
+                max_query_pts=4096,
+                query_frame_num=min(8, len(images)),
+                keypoint_extractor="aliked+sp",
+                fine_tracking=True,
+            )
+        reconstruction, _ = batch_np_matrix_to_pycolmap(
+            track_points,
+            extrinsics_w2c,
+            intrinsics,
+            tracks,
+            np.asarray(images.shape[-2:]),
+            masks=visibility > 0.2,
+            max_reproj_error=8.0,
+            shared_camera=True,
+            camera_type="PINHOLE",
+            points_rgb=track_colors,
+        )
+        if reconstruction is None:
+            return None
+        before = float(reconstruction.compute_mean_reprojection_error())
+        pycolmap.bundle_adjustment(reconstruction, pycolmap.BundleAdjustmentOptions())
+        after = float(reconstruction.compute_mean_reprojection_error())
+        image_ids = sorted(reconstruction.images)
+        refined_extrinsics = np.stack(
+            [np.asarray(reconstruction.images[image_id].cam_from_world().matrix())[:3] for image_id in image_ids]
+        )
+        refined_intrinsics = np.stack(
+            [
+                np.asarray(reconstruction.cameras[reconstruction.images[image_id].camera_id].calibration_matrix())
+                for image_id in image_ids
+            ]
+        )
+        point_ids = sorted(reconstruction.points3D)
+        refined_points = np.stack([np.asarray(reconstruction.points3D[point_id].xyz) for point_id in point_ids])
+        refined_colors = np.stack([np.asarray(reconstruction.points3D[point_id].color) for point_id in point_ids])
+        sparse_dir = output_dir / "ba_sparse"
+        sparse_dir.mkdir(parents=True, exist_ok=True)
+        reconstruction.write(sparse_dir)
+        return (
+            refined_extrinsics.astype(np.float32),
+            refined_intrinsics.astype(np.float32),
+            refined_points.astype(np.float32),
+            refined_colors.astype(np.uint8),
+            {
+                "vggt_bundle_adjustment_status": "complete",
+                "vggt_ba_reprojection_before": before,
+                "vggt_ba_reprojection_after": after,
+                "vggt_ba_points": len(refined_points),
+            },
+        )
+    except Exception as error:
+        return (
+            extrinsics_w2c,
+            intrinsics,
+            points_3d.reshape(-1, 3)[:0],
+            np.empty((0, 3), dtype=np.uint8),
+            {
+                "vggt_bundle_adjustment_status": "failed",
+                "vggt_ba_error": f"{type(error).__name__}: {error}",
+            },
+        )
+
+
 @dataclass(frozen=True)
 class VGGTGeometryResult:
     keyframe_indices: np.ndarray
@@ -142,6 +250,8 @@ class VGGTBackend:
         if len(frame_paths) != len(commanded_poses_c2w):
             raise ValueError("frame_paths and commanded_poses_c2w must have equal length")
 
+        root = Path(output_dir)
+        root.mkdir(parents=True, exist_ok=True)
         indices, sharpness = select_keyframes(frame_paths, self.config.num_keyframes, self.config.blur_threshold)
         selected_paths = tuple(Path(frame_paths[index]) for index in indices)
         selected_commands = np.asarray(commanded_poses_c2w)[indices]
@@ -152,10 +262,11 @@ class VGGTBackend:
             "sharpness_median": float(np.median(list(sharpness.values()))),
         }
         model = None
+        ba_result = None
         with measure_stage("vggt_geometry") as stage_metrics:
             try:
                 model = VGGT.from_pretrained(self.config.model_id).to("cuda").eval()
-                images = load_and_preprocess_images([str(path) for path in selected_paths]).to("cuda")
+                images = load_and_preprocess_images([str(path) for path in selected_paths], mode="pad").to("cuda")
                 dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
                 with torch.inference_mode(), torch.autocast("cuda", dtype=dtype):
                     batched_images = images[None]
@@ -172,25 +283,66 @@ class VGGTBackend:
                 depths_np = depth.squeeze(0).detach().float().cpu().numpy()
                 confidence_np = confidence.squeeze(0).detach().float().cpu().numpy()
                 points_np = np.asarray(points, dtype=np.float32)
+                if self.config.use_bundle_adjustment:
+                    ba_result = _run_vggt_bundle_adjustment(
+                        images=images,
+                        depth_confidence=confidence_np,
+                        points_3d=points_np,
+                        extrinsics_w2c=extrinsics_np,
+                        intrinsics=intrinsics_np,
+                        output_dir=root,
+                    )
             finally:
                 del model
                 release_gpu_memory()
             metrics.update(stage_metrics)
 
-        predicted_c2w = invert_poses(extrinsics_np)
-        similarity = robust_similarity_alignment(
-            predicted_c2w[:, :3, 3],
-            selected_commands[:, :3, 3],
-            residual_threshold=self.config.max_center_residual_ratio
-            * max(np.linalg.norm(selected_commands[:, :3, 3] - selected_commands[:, :3, 3].mean(0), axis=1)),
-        )
-        aligned_c2w = similarity.transform_c2w(predicted_c2w)
-        aligned_points = similarity.transform_points(points_np)
-        rotation_residuals = rotation_geodesic_degrees(aligned_c2w[:, :3, :3], selected_commands[:, :3, :3])
         command_extent = max(
             float(np.linalg.norm(selected_commands[:, :3, 3] - selected_commands[:, :3, 3].mean(0), axis=1).max()),
             1e-6,
         )
+        metrics["vggt_bundle_adjustment_status"] = "disabled"
+        if ba_result is not None:
+            ba_extrinsics, ba_intrinsics, _, _, ba_metrics = ba_result
+            metrics.update(ba_metrics)
+            if ba_metrics["vggt_bundle_adjustment_status"] == "complete" and len(ba_extrinsics) == len(indices):
+                ba_predicted_c2w = invert_poses(ba_extrinsics)
+                ba_similarity = robust_similarity_alignment(
+                    ba_predicted_c2w[:, :3, 3],
+                    selected_commands[:, :3, 3],
+                    residual_threshold=self.config.max_center_residual_ratio * command_extent,
+                )
+                ba_aligned_c2w = ba_similarity.transform_c2w(ba_predicted_c2w)
+                ba_rotation_residuals = rotation_geodesic_degrees(
+                    ba_aligned_c2w[:, :3, :3],
+                    selected_commands[:, :3, :3],
+                )
+                reprojection_improved = np.isfinite(float(ba_metrics["vggt_ba_reprojection_after"])) and float(
+                    ba_metrics["vggt_ba_reprojection_after"]
+                ) <= float(ba_metrics["vggt_ba_reprojection_before"])
+                pose_within_bounds = (
+                    float(np.median(ba_similarity.residuals)) <= self.config.max_center_residual_ratio * command_extent
+                    and float(np.median(ba_rotation_residuals)) <= self.config.max_rotation_residual_deg
+                )
+                if reprojection_improved and pose_within_bounds:
+                    extrinsics_np = ba_extrinsics
+                    intrinsics_np = ba_intrinsics
+                    points_np = unproject_depth_map_to_point_map(depths_np, extrinsics_np, intrinsics_np)
+                    metrics["vggt_ba_accepted"] = True
+                else:
+                    metrics["vggt_ba_accepted"] = False
+            else:
+                metrics["vggt_ba_accepted"] = False
+
+        predicted_c2w = invert_poses(extrinsics_np)
+        similarity = robust_similarity_alignment(
+            predicted_c2w[:, :3, 3],
+            selected_commands[:, :3, 3],
+            residual_threshold=self.config.max_center_residual_ratio * command_extent,
+        )
+        aligned_c2w = similarity.transform_c2w(predicted_c2w)
+        aligned_points = similarity.transform_points(points_np)
+        rotation_residuals = rotation_geodesic_degrees(aligned_c2w[:, :3, :3], selected_commands[:, :3, :3])
         accepted = (similarity.residuals <= self.config.max_center_residual_ratio * command_extent) & (
             rotation_residuals <= self.config.max_rotation_residual_deg
         )
@@ -220,9 +372,13 @@ class VGGTBackend:
         point_mask &= confidence_np >= confidence_threshold
         point_mask &= accepted[:, None, None]
         if object_mask is not None:
-            mask_image = Image.open(object_mask).convert("L")
             height, width = depths_np.shape[-2:]
-            mask = np.asarray(mask_image.resize((width, height), Image.Resampling.NEAREST)) >= 128
+            mask = _load_vggt_padded_mask(object_mask)
+            if mask.shape != (height, width):
+                mask = np.asarray(
+                    Image.fromarray(mask).resize((width, height), Image.Resampling.NEAREST),
+                    dtype=bool,
+                )
             point_mask &= mask[None]
         flat_points = aligned_points[point_mask]
         flat_colors = colors[point_mask]

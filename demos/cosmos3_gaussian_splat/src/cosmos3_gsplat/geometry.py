@@ -135,6 +135,10 @@ def rotation_geodesic_degrees(left: np.ndarray, right: np.ndarray) -> np.ndarray
 
 def invert_poses(poses: np.ndarray) -> np.ndarray:
     values = np.asarray(poses, dtype=np.float64)
-    if values.ndim != 3 or values.shape[1:] != (4, 4):
-        raise ValueError("poses must have shape [N, 4, 4]")
+    if values.ndim != 3 or values.shape[1:] not in ((3, 4), (4, 4)):
+        raise ValueError("poses must have shape [N, 3, 4] or [N, 4, 4]")
+    if values.shape[1:] == (3, 4):
+        homogeneous = np.repeat(np.eye(4, dtype=np.float64)[None], len(values), axis=0)
+        homogeneous[:, :3] = values
+        values = homogeneous
     return np.linalg.inv(values)

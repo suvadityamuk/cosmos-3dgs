@@ -126,6 +126,7 @@ class CosmosCameraGenerator:
                     num_inference_steps=self.config.num_inference_steps,
                     guidance_scale=self.config.guidance_scale,
                     use_system_prompt=False,
+                    enable_safety_check=self.config.enable_guardrails,
                     generator=torch.Generator(device="cuda").manual_seed(self.config.seed),
                 )
                 frames = _normalise_video_frames(result.video)
