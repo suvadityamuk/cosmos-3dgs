@@ -77,8 +77,11 @@ def test_submit_job_mounts_explicit_artifact_bucket(monkeypatch, tmp_path: Path)
     artifact_volume = api.run_kwargs["volumes"][-1]
     assert artifact_volume.source == "tester/demo"
     assert artifact_volume.mount_path == "/artifacts"
+    assert artifact_volume.path == "runs/chair-run"
     assert artifact_volume.read_only is False
     assert api.run_kwargs["flavor"] == "a100-large"
     assert api.run_kwargs["secrets"] == {"HF_TOKEN": "secret-token"}
     assert api.run_kwargs["env"]["HF_ARTIFACT_URI"] == metadata["artifact_uri"]
+    assert api.run_kwargs["env"]["COSMOS3_RUN_ID"] == "chair-run"
+    assert "/artifacts" in api.run_kwargs["command"]
     assert (b"", "runs/chair-run/.keep") in api.bucket_files

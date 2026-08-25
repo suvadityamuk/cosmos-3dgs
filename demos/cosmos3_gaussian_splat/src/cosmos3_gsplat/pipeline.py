@@ -78,7 +78,10 @@ class Cosmos3GaussianSplatPipeline:
                 raise ValueError("cannot resume with a different configuration or prompt")
         else:
             run_config.write_json(layout.config)
-            manifest = RunManifest.create(str(layout.config), run_id=layout.root.name)
+            manifest = RunManifest.create(
+                str(layout.config),
+                run_id=os.environ.get("COSMOS3_RUN_ID") or layout.root.name,
+            )
             manifest.write(layout.manifest)
 
         camera_trajectory = trajectory or make_closed_helical_trajectory(run_config.trajectory)

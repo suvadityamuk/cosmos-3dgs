@@ -103,6 +103,7 @@ def submit_job(
         type="bucket",
         source=bucket_id,
         mount_path="/artifacts",
+        path=run_prefix,
         read_only=False,
     )
     artifact_uri = f"hf://buckets/{bucket_id}/{run_prefix}"
@@ -114,7 +115,7 @@ def submit_job(
         "--prompt-file",
         "/inputs/prompt.txt",
         "--output-dir",
-        f"/artifacts/{run_prefix}",
+        "/artifacts",
         "--profile",
         profile,
     ]
@@ -131,6 +132,7 @@ def submit_job(
             "HF_ARTIFACT_URI": artifact_uri,
             "HF_HUB_DOWNLOAD_TIMEOUT": "120",
             "GIT_LFS_SKIP_SMUDGE": "1",
+            "COSMOS3_RUN_ID": resolved_run_id,
         },
         secrets={"HF_TOKEN": token},
         volumes=[source_volume, input_volume, artifact_volume],
