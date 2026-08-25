@@ -58,8 +58,11 @@ uv run cosmos3-gsplat trajectory --output-dir /tmp/cosmos3-trajectory
 Install the `gpu` extra only on a CUDA machine:
 
 ```bash
-uv sync --extra gpu --torch-backend=auto
+uv sync --extra gpu
 ```
+
+The project lock routes Linux `torch`/`torchvision` through the CUDA 12.8 PyTorch index used by
+the A100 Job target.
 
 ## Submit an A100 Job
 

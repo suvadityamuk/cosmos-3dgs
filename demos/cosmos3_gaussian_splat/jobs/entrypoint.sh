@@ -28,6 +28,7 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/tmp/cosmos3-gsplat-venv}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$OUTPUT_DIR"
+exec > >(tee -a "$OUTPUT_DIR/job.log") 2>&1
 
 if ! command -v uv >/dev/null 2>&1; then
   python -m pip install --no-cache-dir uv
@@ -36,7 +37,7 @@ fi
 echo "GPU:"
 nvidia-smi
 echo "Installing locked project dependencies..."
-uv sync --project /workspace --extra gpu --torch-backend=auto
+uv sync --project /workspace --frozen --extra gpu
 
 PROMPT="$(<"$PROMPT_FILE")"
 ARGS=(
@@ -50,4 +51,4 @@ if [[ -n "$MASK" ]]; then
   ARGS+=(--mask "$MASK")
 fi
 
-uv run --project /workspace cosmos3-gsplat "${ARGS[@]}" 2>&1 | tee "$OUTPUT_DIR/job.log"
+uv run --project /workspace cosmos3-gsplat "${ARGS[@]}"

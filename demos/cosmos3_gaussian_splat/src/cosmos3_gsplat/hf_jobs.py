@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,24 +57,40 @@ def submit_job(
     project_dir = project_dir.resolve()
     if not (project_dir / "pyproject.toml").is_file():
         raise FileNotFoundError(f"pyproject.toml not found under project directory: {project_dir}")
-    source_volume = api.sync_job_volume(
-        project_dir,
-        "/workspace",
-        remote_name="cosmos3-gaussian-splat-source",
-        read_only=True,
-        namespace=owner,
-        token=token,
-    )
     with tempfile.TemporaryDirectory(prefix="cosmos3-gsplat-input-") as temporary:
         staging = Path(temporary)
+        staged_project = staging / "project"
+        shutil.copytree(
+            project_dir,
+            staged_project,
+            ignore=shutil.ignore_patterns(
+                ".venv",
+                ".pytest_cache",
+                ".ruff_cache",
+                "__pycache__",
+                "*.pyc",
+                "outputs",
+                "artifacts",
+            ),
+        )
+        source_volume = api.sync_job_volume(
+            staged_project,
+            "/workspace",
+            remote_name="cosmos3-gaussian-splat-source",
+            read_only=True,
+            namespace=owner,
+            token=token,
+        )
+        staged_input = staging / "input"
+        staged_input.mkdir()
         from PIL import Image
 
-        Image.open(reference_image).convert("RGB").save(staging / "reference.png")
-        (staging / "prompt.txt").write_text(prompt)
+        Image.open(reference_image).convert("RGB").save(staged_input / "reference.png")
+        (staged_input / "prompt.txt").write_text(prompt)
         if mask:
-            Image.open(mask).convert("L").save(staging / "mask.png")
+            Image.open(mask).convert("L").save(staged_input / "mask.png")
         input_volume = api.sync_job_volume(
-            staging,
+            staged_input,
             "/inputs",
             remote_name=f"cosmos3-gsplat-input-{resolved_run_id}",
             read_only=True,
