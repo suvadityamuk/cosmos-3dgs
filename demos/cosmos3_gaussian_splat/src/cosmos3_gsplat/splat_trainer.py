@@ -74,6 +74,7 @@ class GaussianSplatTrainer:
         output_dir: str | Path,
     ) -> GaussianSplatResult:
         try:
+            import gsplat
             import torch
             from gsplat import export_splats
             from gsplat.losses import l1_loss, ssim_loss
@@ -83,6 +84,8 @@ class GaussianSplatTrainer:
             raise RuntimeError("Gaussian training requires the package's 'gpu' optional dependencies") from error
         if not torch.cuda.is_available():
             raise RuntimeError("Gaussian splat training requires a CUDA GPU")
+        if not gsplat.has_3dgs():
+            raise RuntimeError("gsplat CUDA kernels are unavailable; use a CUDA devel image with nvcc")
 
         root = Path(output_dir)
         root.mkdir(parents=True, exist_ok=True)
@@ -169,7 +172,7 @@ class GaussianSplatTrainer:
         with measure_stage("gsplat_training") as stage_metrics:
             for step in range(steps):
                 image_index = int(train_indices[step % len(train_indices)])
-                for optimizer in (*optimizers.values(), pose_optimizer, focal_optimizer):
+                for optimizer in (*optimizers.values(), pose_optimizer):
                     optimizer.zero_grad(set_to_none=True)
                 corrected_c2w = _corrected_c2w(base_c2w, pose_delta)
                 focal_scale = torch.exp(log_focal)
@@ -208,9 +211,8 @@ class GaussianSplatTrainer:
                 center_prior = torch.nn.functional.smooth_l1_loss(corrected_c2w[:, :3, 3], command_c2w[:, :3, 3])
                 rotation_prior = torch.mean(torch.square(corrected_c2w[:, :3, :3] - command_c2w[:, :3, :3]))
                 loss = loss + self.config.pose_prior_weight * (center_prior + rotation_prior)
-                loss = loss + self.config.focal_prior_weight * torch.square(log_focal)
                 loss.backward()
-                for optimizer in (*optimizers.values(), pose_optimizer, focal_optimizer):
+                for optimizer in (*optimizers.values(), pose_optimizer):
                     optimizer.step()
                 strategy.step_post_backward(
                     parameters,
@@ -220,6 +222,20 @@ class GaussianSplatTrainer:
                     info,
                     packed=True,
                 )
+                if step % self.config.focal_update_every == 0:
+                    self._finite_difference_focal_step(
+                        log_focal=log_focal,
+                        optimizer=focal_optimizer,
+                        epsilon=self.config.focal_finite_difference_epsilon,
+                        prior_weight=self.config.focal_prior_weight,
+                        parameters=parameters,
+                        pose_c2w=corrected_c2w[image_index : image_index + 1].detach(),
+                        base_k=base_k[image_index : image_index + 1],
+                        target=target_rgb,
+                        width=width,
+                        height=height,
+                        rasterization=rasterization,
+                    )
                 completed_steps = step + 1
                 current_loss = float(loss.detach())
                 if current_loss < best_loss - 1e-5:
@@ -296,6 +312,54 @@ class GaussianSplatTrainer:
             },
             metrics=metrics,
         )
+
+    @staticmethod
+    def _finite_difference_focal_step(
+        *,
+        log_focal,
+        optimizer,
+        epsilon: float,
+        prior_weight: float,
+        parameters,
+        pose_c2w,
+        base_k,
+        target,
+        width: int,
+        height: int,
+        rasterization,
+    ) -> None:
+        """Optimize shared focal length despite gsplat treating K as non-differentiable."""
+
+        import torch
+
+        losses = []
+        with torch.no_grad():
+            for offset in (-epsilon, epsilon):
+                scale = torch.exp(log_focal.detach() + offset)
+                k = base_k.clone()
+                k[:, 0, 0] = base_k[:, 0, 0] * scale
+                k[:, 1, 1] = base_k[:, 1, 1] * scale
+                rendered, _, _ = rasterization(
+                    means=parameters["means"],
+                    quats=torch.nn.functional.normalize(parameters["quats"], dim=-1),
+                    scales=torch.exp(parameters["scales"]),
+                    opacities=torch.sigmoid(parameters["opacities"]),
+                    colors=parameters["sh0"],
+                    viewmats=torch.linalg.inv(pose_c2w),
+                    Ks=k,
+                    width=width,
+                    height=height,
+                    packed=True,
+                    sh_degree=0,
+                )
+                data_loss = torch.mean(torch.abs(rendered[..., :3] - target))
+                losses.append(data_loss + prior_weight * torch.square(log_focal.detach() + offset))
+        gradient = (losses[1] - losses[0]) / (2.0 * epsilon)
+        optimizer.zero_grad(set_to_none=True)
+        log_focal.grad = gradient.reshape_as(log_focal)
+        optimizer.step()
+        with torch.no_grad():
+            log_focal.clamp_(math.log(0.67), math.log(1.5))
 
     @staticmethod
     def _render_outputs(

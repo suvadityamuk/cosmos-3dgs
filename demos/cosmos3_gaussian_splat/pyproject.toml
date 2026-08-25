@@ -23,8 +23,8 @@ dependencies = [
 [project.optional-dependencies]
 gpu = [
   "accelerate>=1.12.0",
-  "diffusers @ git+https://github.com/huggingface/diffusers.git",
-  "gsplat>=1.5.3",
+  "diffusers @ git+https://github.com/huggingface/diffusers.git@a949d3dd906528363d2b61f7f0b38abaed4169ca",
+  "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@90d7b4b349e379ccf9ee6a8cef76aa40f48bb32e",
   "hydra-core>=1.3.5",
   "lightglue",
   "omegaconf>=2.3.1",
@@ -33,7 +33,7 @@ gpu = [
   "torch>=2.7.0",
   "torchvision>=0.22.0",
   "transformers>=5.11.0",
-  "vggt @ git+https://github.com/facebookresearch/vggt.git",
+  "vggt @ git+https://github.com/facebookresearch/vggt.git@a288dd0f14786c93483e45524328726ab7b1b4ce",
 ]
 test = [
   "pytest>=8.3.0",
@@ -51,7 +51,7 @@ packages = ["src/cosmos3_gsplat"]
 allow-direct-references = true
 
 [tool.uv.sources]
-lightglue = { git = "https://github.com/cvg/LightGlue.git" }
+lightglue = { git = "https://github.com/cvg/LightGlue.git", rev = "eb42fee2d71449efb0aa5c10549752b5d75384d8" }
 torch = [
   { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
 ]
@@ -63,6 +63,9 @@ torchvision = [
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.uv.extra-build-variables]
+gsplat = { BUILD_NO_CUDA = "1", BUILD_EXPERIMENTAL = "0" }
 
 [tool.pytest.ini_options]
 addopts = "-q"

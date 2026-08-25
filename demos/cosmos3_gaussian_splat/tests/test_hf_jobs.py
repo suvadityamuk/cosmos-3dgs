@@ -22,6 +22,9 @@ class FakeApi:
         assert kwargs["exist_ok"] is True
         return SimpleNamespace(url="https://huggingface.co/buckets/tester/demo")
 
+    def bucket_info(self, **kwargs):
+        return SimpleNamespace(private=True)
+
     def batch_bucket_files(self, **kwargs):
         self.bucket_files.extend(kwargs["add"])
 

@@ -51,6 +51,7 @@ class GenerationConfig:
 @dataclass(frozen=True)
 class GeometryConfig:
     model_id: str = "facebook/VGGT-1B"
+    model_revision: str = "860abec7937da0a4c03c41d3c269c366e82abdf9"
     num_keyframes: int = 32
     min_accepted_views: int = 16
     blur_threshold: float = 20.0
@@ -82,6 +83,8 @@ class SplatConfig:
     pose_prior_weight: float = 1e-3
     focal_learning_rate: float = 1e-5
     focal_prior_weight: float = 1e-4
+    focal_update_every: int = 50
+    focal_finite_difference_epsilon: float = 0.01
     depth_loss_weight: float = 0.05
     ssim_weight: float = 0.2
     early_stop_patience: int = 800
@@ -95,6 +98,8 @@ class SplatConfig:
             raise ValueError("initial_opacity must be in (0, 1)")
         if not 0 <= self.ssim_weight <= 1:
             raise ValueError("ssim_weight must be in [0, 1]")
+        if self.focal_update_every <= 0 or self.focal_finite_difference_epsilon <= 0:
+            raise ValueError("focal finite-difference settings must be positive")
 
 
 @dataclass(frozen=True)

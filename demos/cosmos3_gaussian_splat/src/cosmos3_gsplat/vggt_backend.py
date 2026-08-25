@@ -265,7 +265,16 @@ class VGGTBackend:
         ba_result = None
         with measure_stage("vggt_geometry") as stage_metrics:
             try:
-                model = VGGT.from_pretrained(self.config.model_id).to("cuda").eval()
+                model = (
+                    VGGT.from_pretrained(
+                        self.config.model_id,
+                        revision=self.config.model_revision,
+                        map_location="cpu",
+                        strict=True,
+                    )
+                    .to("cuda")
+                    .eval()
+                )
                 images = load_and_preprocess_images([str(path) for path in selected_paths], mode="pad").to("cuda")
                 dtype = torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
                 with torch.inference_mode(), torch.autocast("cuda", dtype=dtype):
@@ -391,6 +400,7 @@ class VGGTBackend:
         metrics.update(
             {
                 "geometry_model": self.config.model_id,
+                "geometry_model_revision": self.config.model_revision,
                 "accepted_views": int(accepted.sum()),
                 "sim3_scale": similarity.scale,
                 "center_residual_median": float(np.median(similarity.residuals)),

@@ -50,6 +50,8 @@ def submit_job(
     owner = namespace or api.whoami(token=token)["name"]
     bucket_id = bucket if "/" in bucket else f"{owner}/{bucket}"
     bucket_url = api.create_bucket(bucket_id=bucket_id, private=True, exist_ok=True, token=token)
+    if not api.bucket_info(bucket_id=bucket_id, token=token).private:
+        raise RuntimeError(f"Artifact bucket {bucket_id!r} exists but is public; refusing to upload run data")
     resolved_run_id = run_id or f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{token_hex(4)}"
     run_prefix = f"runs/{resolved_run_id}"
     api.batch_bucket_files(bucket_id=bucket_id, add=[(b"", f"{run_prefix}/.keep")], token=token)
@@ -172,6 +174,14 @@ def main() -> None:
         print(json.dumps(payload, indent=2))
         if final.status.stage != "COMPLETED":
             raise SystemExit(f"HF Job ended with status {final.status.stage}")
+        completion = list(
+            api.get_bucket_paths_info(
+                bucket_id=metadata["bucket_id"],
+                paths=[f"runs/{metadata['run_id']}/complete.json"],
+            )
+        )
+        if not completion:
+            raise SystemExit("HF Job completed but the artifact bucket has no complete.json")
         if args.download_dir:
             args.download_dir.mkdir(parents=True, exist_ok=True)
             api.sync_bucket(metadata["artifact_uri"], str(args.download_dir))
