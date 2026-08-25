@@ -83,5 +83,6 @@ def test_submit_job_mounts_explicit_artifact_bucket(monkeypatch, tmp_path: Path)
     assert api.run_kwargs["secrets"] == {"HF_TOKEN": "secret-token"}
     assert api.run_kwargs["env"]["HF_ARTIFACT_URI"] == metadata["artifact_uri"]
     assert api.run_kwargs["env"]["COSMOS3_RUN_ID"] == "chair-run"
+    assert api.run_kwargs["env"]["TORCH_CUDA_ARCH_LIST"] == "8.0"
     assert "/artifacts" in api.run_kwargs["command"]
     assert (b"", "runs/chair-run/.keep") in api.bucket_files

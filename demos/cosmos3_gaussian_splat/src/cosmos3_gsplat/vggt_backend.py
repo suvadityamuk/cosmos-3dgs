@@ -56,6 +56,18 @@ def _load_vggt_padded_mask(path: str | Path, target_size: int = 518) -> np.ndarr
     return np.asarray(canvas) >= 128
 
 
+def _pycolmap_image_extrinsic(image) -> np.ndarray:
+    """Read a 3x4 W2C matrix across PyCOLMAP 3.x/4.x API differences."""
+
+    transform = image.cam_from_world
+    if callable(transform):
+        transform = transform()
+    matrix = transform.matrix
+    if callable(matrix):
+        matrix = matrix()
+    return np.asarray(matrix)[:3]
+
+
 def _run_vggt_bundle_adjustment(
     *,
     images,
@@ -110,7 +122,7 @@ def _run_vggt_bundle_adjustment(
         after = float(reconstruction.compute_mean_reprojection_error())
         image_ids = sorted(reconstruction.images)
         refined_extrinsics = np.stack(
-            [np.asarray(reconstruction.images[image_id].cam_from_world().matrix())[:3] for image_id in image_ids]
+            [_pycolmap_image_extrinsic(reconstruction.images[image_id]) for image_id in image_ids]
         )
         refined_intrinsics = np.stack(
             [

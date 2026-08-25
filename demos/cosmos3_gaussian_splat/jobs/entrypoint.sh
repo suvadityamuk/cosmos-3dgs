@@ -39,6 +39,17 @@ nvidia-smi
 echo "Installing locked project dependencies..."
 uv sync --project /workspace --frozen --extra gpu
 
+echo "Precompiling gsplat CUDA kernels for ${TORCH_CUDA_ARCH_LIST:-the detected GPU}..."
+VERBOSE=1 uv run --project /workspace python - <<'PY'
+import gsplat
+import torch
+from gsplat.cuda._backend import _C
+
+if not torch.cuda.is_available() or not gsplat.has_3dgs() or _C is None:
+    raise RuntimeError("gsplat CUDA preflight failed")
+print("gsplat CUDA preflight complete:", torch.cuda.get_device_name(0), torch.version.cuda)
+PY
+
 PROMPT="$(<"$PROMPT_FILE")"
 ARGS=(
   run

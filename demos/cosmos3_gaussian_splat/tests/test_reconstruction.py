@@ -1,12 +1,13 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
 
 from cosmos3_gsplat.config import GeometryConfig
 from cosmos3_gsplat.reconstruction import ReconstructionResult, build_reconstruction
-from cosmos3_gsplat.vggt_backend import VGGTGeometryResult
+from cosmos3_gsplat.vggt_backend import VGGTGeometryResult, _pycolmap_image_extrinsic
 
 
 def _synthetic_geometry(tmp_path: Path) -> VGGTGeometryResult:
@@ -54,3 +55,11 @@ def test_geometry_persistence_and_colmap_export(tmp_path: Path) -> None:
 
     reloaded = ReconstructionResult.read(reconstruction.root)
     np.testing.assert_allclose(reloaded.poses_c2w, reconstruction.poses_c2w)
+
+
+def test_pycolmap_transform_property_and_method_compatibility() -> None:
+    matrix = np.eye(4)
+    property_image = SimpleNamespace(cam_from_world=SimpleNamespace(matrix=matrix))
+    method_image = SimpleNamespace(cam_from_world=lambda: SimpleNamespace(matrix=lambda: matrix))
+    np.testing.assert_allclose(_pycolmap_image_extrinsic(property_image), matrix[:3])
+    np.testing.assert_allclose(_pycolmap_image_extrinsic(method_image), matrix[:3])
