@@ -62,8 +62,8 @@ uv sync --extra gpu
 ```
 
 The project lock routes Linux `torch`/`torchvision` through the CUDA 12.8 PyTorch index used by
-the A100 Job target. Diffusers, VGGT source, LightGlue, and the current `gsplat` development API
-are pinned to tested commits; the public VGGT checkpoint revision is pinned in `GeometryConfig`.
+the A100 Job target. Diffusers, VGGT source, LightGlue, and stable `gsplat==1.5.3`
+are pinned; the public VGGT checkpoint revision is pinned in `GeometryConfig`.
 `gsplat` CUDA kernels compile lazily on the Job, so the Docker image must include `nvcc`.
 
 ## Submit an A100 Job
