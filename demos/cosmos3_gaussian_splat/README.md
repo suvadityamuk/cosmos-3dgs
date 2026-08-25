@@ -1,0 +1,134 @@
+# Cosmos 3 Gaussian Splat MVP
+
+This standalone research demo turns one reference image into a plausible Gaussian-splat asset:
+
+1. Cosmos 3 generates a camera-controlled, closed orbit from the reference.
+2. VGGT estimates the apparent cameras, intrinsics, dense depth, and confidence.
+3. The VGGT cameras are Sim(3)-aligned with the commanded camera trajectory.
+4. Optional COLMAP SfM records an independent consistency diagnostic.
+5. `gsplat` optimizes Gaussians, bounded camera corrections, and one shared focal correction.
+
+This reconstructs a **plausible completion**, not the unknowable ground-truth back/underside of a
+single-view object.
+
+## Public API
+
+```python
+from cosmos3_gsplat import Cosmos3GaussianSplatPipeline
+
+pipe = Cosmos3GaussianSplatPipeline.from_pretrained(
+    "nvidia/Cosmos3-Nano",
+    geometry_model="facebook/VGGT-1B",
+)
+result = pipe(
+    prompt="A stationary wooden chair. The camera orbits while the chair remains still.",
+    image="chair.png",
+    output_dir="outputs/chair",
+)
+print(result.splat_path, result.report_path)
+```
+
+The stages `generate`, `geometry`, `splat`, and `report` are independently resumable. The final
+`complete.json` is written only after every stage succeeds.
+
+## Requirements and access
+
+- The full pipeline requires CUDA. The supported job target is one Hugging Face Jobs
+  `a100-large` (80 GB VRAM).
+- Accept access for `nvidia/Cosmos3-Nano` and
+  `nvidia/Cosmos-1.0-Guardrail`, then authenticate locally with `hf auth login`.
+- `facebook/VGGT-1B` is non-commercial. This MVP is for research/evaluation.
+- Keep the input object centered and mostly visible. An optional foreground mask improves the
+  initial point cloud and splat loss.
+
+The Job uses BF16, Cosmos model CPU offload, and strictly sequential model lifetimes:
+Cosmos is released before VGGT loads, and VGGT is released before `gsplat` training.
+
+## Local CPU checks
+
+The geometry math, manifests, CLI, and job submission code do not import CUDA packages:
+
+```bash
+uv sync --extra test
+uv run pytest
+uv run ruff check src tests
+uv run cosmos3-gsplat trajectory --output-dir /tmp/cosmos3-trajectory
+```
+
+Install the `gpu` extra only on a CUDA machine:
+
+```bash
+uv sync --extra gpu --torch-backend=auto
+```
+
+## Submit an A100 Job
+
+The submitter creates/reuses a private HF bucket, syncs source/input files to a read-only job
+volume, and mounts the artifact bucket read-write at `/artifacts`.
+
+```bash
+uv run cosmos3-gsplat-submit \
+  --reference-image ./chair.png \
+  --prompt "A stationary wooden chair. The camera orbits while the chair remains completely still." \
+  --bucket YOUR_NAMESPACE/cosmos3-gsplat-artifacts \
+  --profile smoke \
+  --wait \
+  --download-dir ./outputs/smoke
+```
+
+After the smoke job succeeds, run `--profile full`. The default Docker image is the CUDA 12 NGC
+PyTorch image recommended by the Cosmos cookbook, and the timeout is four hours. Override either
+with `--image` or `--timeout`.
+
+Each run writes to:
+
+```text
+hf://buckets/<namespace>/<bucket>/runs/<run-id>/
+├── config.json
+├── manifest.json
+├── complete.json
+├── job.log
+├── generated/
+│   ├── cosmos_orbit.mp4
+│   ├── commanded_poses_c2w.npy
+│   ├── camera_actions.json
+│   └── frames/
+├── geometry/
+│   ├── vggt/
+│   └── reconstruction/
+├── splat/
+│   ├── splat.ply
+│   ├── splat.pt
+│   ├── render_orbit.mp4
+│   └── generated_vs_splat.mp4
+└── report/
+    ├── index.html
+    ├── metrics.json
+    └── trajectories.png
+```
+
+Retrieve a run directly:
+
+```bash
+hf buckets sync \
+  hf://buckets/<namespace>/<bucket>/runs/<run-id> \
+  ./outputs/<run-id>
+```
+
+Interrupted runs retain their stage manifests and artifacts but have no `complete.json`. Re-submit
+with the same run ID to resume.
+
+## Diagnostics
+
+The report includes:
+
+- commanded versus VGGT-aligned camera paths;
+- translation, rotation, and loop-closure residuals;
+- confidence-approved view and initial point counts;
+- classical COLMAP registration/reprojection results when available;
+- training/held-out rendering metrics;
+- per-stage timing and peak CPU/GPU memory;
+- generated orbit, splat orbit, and side-by-side comparison videos.
+
+Classical SfM is intentionally diagnostic rather than blocking: generated views can violate rigid
+multi-view assumptions even when VGGT produces a usable dense initialization.
