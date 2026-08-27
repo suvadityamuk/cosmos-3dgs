@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# ZeroGPU requires `spaces` before any import that can touch torch/CUDA.
+# ruff: noqa: I001
+
 import os
 import shutil
 import tempfile
