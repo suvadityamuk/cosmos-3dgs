@@ -5,7 +5,7 @@ import numpy as np
 from cosmos3_gsplat.config import PipelineConfig
 from cosmos3_gsplat.manifest import RunLayout, RunManifest
 from cosmos3_gsplat.report import build_report
-from cosmos3_gsplat.splat_trainer import _initial_log_scales
+from cosmos3_gsplat.splat_trainer import _initial_log_scales, _social_comparison_frame, _twitter_timeline
 from tests.test_reconstruction import _synthetic_geometry
 
 
@@ -14,6 +14,17 @@ def test_initial_scales_are_finite_for_duplicate_points() -> None:
     scales = _initial_log_scales(points)
     assert scales.shape == (4, 3)
     assert np.isfinite(scales).all()
+
+
+def test_twitter_comparison_is_labeled_padded_and_long_enough() -> None:
+    generated = np.full((17, 19, 3), 64, dtype=np.uint8)
+    reconstructed = np.full((17, 19, 3), 192, dtype=np.uint8)
+    frame = _social_comparison_frame(generated, reconstructed)
+    timeline = _twitter_timeline([frame] * 8)
+    assert frame.shape[0] % 16 == 0
+    assert frame.shape[1] % 16 == 0
+    assert timeline.shape[0] >= 32
+    assert timeline.shape[1:] == frame.shape
 
 
 def test_report_uses_relative_artifact_links(tmp_path: Path) -> None:

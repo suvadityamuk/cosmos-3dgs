@@ -26,6 +26,7 @@ class Cosmos3GaussianSplatPipelineOutput:
     point_cloud_path: Path | None = None
     splat_path: Path | None = None
     render_video: Path | None = None
+    social_video: Path | None = None
     metrics_path: Path | None = None
     report_path: Path | None = None
     bucket_uri: str | None = None
@@ -226,6 +227,7 @@ class Cosmos3GaussianSplatPipeline:
             point_cloud_path=existing(layout.geometry / "vggt" / "vggt_points.ply"),
             splat_path=existing(layout.splat / "gaussian_splat.ply") or existing(layout.splat / "splat.ply"),
             render_video=existing(layout.splat / "render_orbit.mp4"),
+            social_video=existing(layout.splat / "generated-vs-splat.mp4"),
             metrics_path=existing(layout.report / "metrics.json"),
             report_path=existing(layout.report / "index.html"),
             bucket_uri=os.environ.get("HF_ARTIFACT_URI"),

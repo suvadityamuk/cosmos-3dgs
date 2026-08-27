@@ -71,6 +71,7 @@ def build_report(layout: RunLayout) -> ReportResult:
     render_video = layout.splat / "render_orbit.mp4"
     commanded_render_video = layout.splat / "render_commanded_orbit.mp4"
     comparison_video = layout.splat / "generated_vs_splat.mp4"
+    social_video = layout.splat / "generated-vs-splat.mp4"
     splat_path = layout.splat / "gaussian_splat.ply"
     compact_splat_path = layout.splat / "gaussian_splat.splat"
     html = Template(
@@ -102,6 +103,7 @@ def build_report(layout: RunLayout) -> ReportResult:
     </section>
   </div>
   <section><h2>Generated vs. reconstructed</h2><video controls loop src="{{ comparison }}"></video></section>
+  <p><a href="{{ social }}">Download Twitter-ready comparison MP4</a></p>
   <p>
     <a href="{{ splat }}">Download Gaussian splat PLY</a> ·
     <a href="{{ compact_splat }}">Download compact .splat</a>
@@ -118,6 +120,7 @@ def build_report(layout: RunLayout) -> ReportResult:
         render=_relative(render_video, layout.report),
         commanded_render=_relative(commanded_render_video, layout.report),
         comparison=_relative(comparison_video, layout.report),
+        social=_relative(social_video, layout.report),
         splat=_relative(splat_path, layout.report),
         compact_splat=_relative(compact_splat_path, layout.report),
         metrics=metrics,
