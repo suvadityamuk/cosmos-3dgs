@@ -11,6 +11,22 @@ This standalone research demo turns one reference image into a plausible Gaussia
 This reconstructs a **plausible completion**, not the unknowable ground-truth back/underside of a
 single-view object.
 
+## Publish as a standalone repository
+
+This directory is a complete repository root: it includes `pyproject.toml`, `uv.lock`, tests,
+GitHub Actions, job launchers, and its own license. It does not import files from the parent Cosmos
+checkout. To publish it separately:
+
+```bash
+cp -a demos/cosmos3_gaussian_splat /path/to/cosmos3-gaussian-splat
+cd /path/to/cosmos3-gaussian-splat
+git init
+uv sync --frozen --extra test
+uv run pytest
+```
+
+Use a fine-grained `HF_TOKEN` through your local/CI secret manager; never commit it.
+
 ## Public API
 
 ```python
@@ -26,6 +42,17 @@ result = pipe(
     output_dir="outputs/chair",
 )
 print(result.splat_path, result.report_path)
+```
+
+The same API has a direct script entrypoint:
+
+```bash
+uv run python run_demo.py \
+  --image chair.png \
+  --mask chair_mask.png \
+  --prompt "A stationary chair while the camera moves around it." \
+  --output-dir outputs/chair \
+  --profile smoke
 ```
 
 The stages `generate`, `geometry`, `splat`, and `report` are independently resumable. The final
