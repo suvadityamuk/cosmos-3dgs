@@ -263,10 +263,13 @@ class GaussianSplatTrainer:
         best_loss = float("inf")
         stale_steps = 0
         completed_steps = 0
+        invisible_view_skips = 0
         metrics: dict[str, float | int | str | bool] = {}
         with measure_stage("gsplat_training") as stage_metrics:
-            for step in range(steps):
-                image_index = int(train_indices[step % len(train_indices)])
+            max_attempts = steps * max(2, len(train_indices))
+            for attempt in range(max_attempts):
+                step = completed_steps
+                image_index = int(train_indices[attempt % len(train_indices)])
                 for optimizer in (*optimizers.values(), pose_optimizer):
                     optimizer.zero_grad(set_to_none=True)
                 corrected_c2w = _corrected_c2w(base_c2w, pose_delta)
@@ -289,6 +292,10 @@ class GaussianSplatTrainer:
                     sh_degree=0,
                     render_mode="RGB+ED",
                 )
+                gradient_tensor = info.get(strategy.key_for_gradient)
+                if gradient_tensor is None or not gradient_tensor.requires_grad or not rendered.requires_grad:
+                    invisible_view_skips += 1
+                    continue
                 strategy.step_pre_backward(parameters, optimizers, strategy_state, step, info)
                 predicted_rgb = rendered[..., :3]
                 target_rgb = images[image_index : image_index + 1]
@@ -334,7 +341,7 @@ class GaussianSplatTrainer:
                         height=height,
                         rasterization=rasterization,
                     )
-                completed_steps = step + 1
+                completed_steps += 1
                 current_loss = float(loss.detach())
                 if current_loss < best_loss - 1e-5:
                     best_loss = current_loss
@@ -343,7 +350,11 @@ class GaussianSplatTrainer:
                     stale_steps += 1
                 if step > strategy.refine_start_iter and stale_steps >= self.config.early_stop_patience:
                     break
+                if completed_steps >= steps:
+                    break
             metrics.update(stage_metrics)
+        if completed_steps == 0:
+            raise RuntimeError("No training camera sees differentiable Gaussians; check VGGT poses and point alignment")
 
         corrected_c2w = _corrected_c2w(base_c2w, pose_delta).detach()
         corrected_k = base_k.detach().clone()
@@ -401,6 +412,7 @@ class GaussianSplatTrainer:
             {
                 "training_steps_requested": steps,
                 "training_steps_completed": completed_steps,
+                "invisible_view_skips": invisible_view_skips,
                 "early_stopped": completed_steps < steps,
                 "best_training_loss": best_loss,
                 "initial_splats": count,
