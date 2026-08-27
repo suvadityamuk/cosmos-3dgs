@@ -8,7 +8,7 @@ from pathlib import Path
 
 import imageio.v3 as iio
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from scipy.spatial import cKDTree
 
 from .config import SplatConfig
@@ -42,6 +42,31 @@ def _load_images(paths: tuple[Path, ...]) -> np.ndarray:
     if len(shapes) != 1:
         raise ValueError(f"training images must have one shape, got {shapes}")
     return np.stack(arrays)
+
+
+def _social_comparison_frame(generated: np.ndarray, reconstructed: np.ndarray) -> np.ndarray:
+    """Create a labeled, H.264-friendly side-by-side frame."""
+
+    height, width, _ = generated.shape
+    label_height = 42
+    canvas_width = int(math.ceil((2 * width) / 16) * 16)
+    canvas_height = int(math.ceil((height + label_height) / 16) * 16)
+    canvas = Image.new("RGB", (canvas_width, canvas_height), "black")
+    canvas.paste(Image.fromarray(generated), (0, label_height))
+    canvas.paste(Image.fromarray(reconstructed), (width, label_height))
+    draw = ImageDraw.Draw(canvas)
+    draw.text((12, 13), "COSMOS 3 GENERATED VIEW", fill="white")
+    draw.text((width + 12, 13), "GAUSSIAN SPLAT RENDER", fill="white")
+    return np.asarray(canvas)
+
+
+def _twitter_timeline(frames: list[np.ndarray], fps: int = 4, minimum_seconds: int = 8) -> np.ndarray:
+    if not frames:
+        raise ValueError("at least one comparison frame is required")
+    ping_pong = frames if len(frames) == 1 else [*frames, *frames[-2:0:-1]]
+    minimum_frames = fps * minimum_seconds
+    repeats = math.ceil(minimum_frames / len(ping_pong))
+    return np.stack((ping_pong * repeats)[: max(minimum_frames, len(ping_pong))])
 
 
 def _skew(vectors):
@@ -238,10 +263,13 @@ class GaussianSplatTrainer:
         best_loss = float("inf")
         stale_steps = 0
         completed_steps = 0
+        invisible_view_skips = 0
         metrics: dict[str, float | int | str | bool] = {}
         with measure_stage("gsplat_training") as stage_metrics:
-            for step in range(steps):
-                image_index = int(train_indices[step % len(train_indices)])
+            max_attempts = steps * max(2, len(train_indices))
+            for attempt in range(max_attempts):
+                step = completed_steps
+                image_index = int(train_indices[attempt % len(train_indices)])
                 for optimizer in (*optimizers.values(), pose_optimizer):
                     optimizer.zero_grad(set_to_none=True)
                 corrected_c2w = _corrected_c2w(base_c2w, pose_delta)
@@ -264,6 +292,10 @@ class GaussianSplatTrainer:
                     sh_degree=0,
                     render_mode="RGB+ED",
                 )
+                gradient_tensor = info.get(strategy.key_for_gradient)
+                if gradient_tensor is None or not gradient_tensor.requires_grad or not rendered.requires_grad:
+                    invisible_view_skips += 1
+                    continue
                 strategy.step_pre_backward(parameters, optimizers, strategy_state, step, info)
                 predicted_rgb = rendered[..., :3]
                 target_rgb = images[image_index : image_index + 1]
@@ -309,7 +341,7 @@ class GaussianSplatTrainer:
                         height=height,
                         rasterization=rasterization,
                     )
-                completed_steps = step + 1
+                completed_steps += 1
                 current_loss = float(loss.detach())
                 if current_loss < best_loss - 1e-5:
                     best_loss = current_loss
@@ -318,7 +350,11 @@ class GaussianSplatTrainer:
                     stale_steps += 1
                 if step > strategy.refine_start_iter and stale_steps >= self.config.early_stop_patience:
                     break
+                if completed_steps >= steps:
+                    break
             metrics.update(stage_metrics)
+        if completed_steps == 0:
+            raise RuntimeError("No training camera sees differentiable Gaussians; check VGGT poses and point alignment")
 
         corrected_c2w = _corrected_c2w(base_c2w, pose_delta).detach()
         corrected_k = base_k.detach().clone()
@@ -359,7 +395,7 @@ class GaussianSplatTrainer:
             },
             checkpoint_path,
         )
-        render_path, commanded_render_path, side_by_side_path, evaluation = self._render_outputs(
+        render_path, commanded_render_path, side_by_side_path, social_path, evaluation = self._render_outputs(
             parameters=parameters,
             poses_c2w=corrected_c2w,
             commanded_poses_c2w=command_c2w,
@@ -376,6 +412,7 @@ class GaussianSplatTrainer:
             {
                 "training_steps_requested": steps,
                 "training_steps_completed": completed_steps,
+                "invisible_view_skips": invisible_view_skips,
                 "early_stopped": completed_steps < steps,
                 "best_training_loss": best_loss,
                 "initial_splats": count,
@@ -398,6 +435,7 @@ class GaussianSplatTrainer:
                 "render": str(render_path),
                 "commanded_render": str(commanded_render_path),
                 "comparison": str(side_by_side_path),
+                "social_comparison": str(social_path),
                 "metrics": str(metrics_path),
             },
             metrics=metrics,
@@ -465,7 +503,7 @@ class GaussianSplatTrainer:
         fps: int,
         output_dir: Path,
         rasterization,
-    ) -> tuple[Path, Path, Path, dict[str, float]]:
+    ) -> tuple[Path, Path, Path, Path, dict[str, float]]:
         import torch
 
         renders: list[np.ndarray] = []
@@ -512,9 +550,30 @@ class GaussianSplatTrainer:
         render_path = output_dir / "render_orbit.mp4"
         commanded_render_path = output_dir / "render_commanded_orbit.mp4"
         comparison_path = output_dir / "generated_vs_splat.mp4"
+        social_path = output_dir / "generated-vs-splat.mp4"
         iio.imwrite(render_path, np.stack(renders), fps=fps, codec="libx264")
         iio.imwrite(commanded_render_path, np.stack(commanded_renders), fps=fps, codec="libx264")
         iio.imwrite(comparison_path, np.stack(comparisons), fps=fps, codec="libx264")
+        social_frames = [_social_comparison_frame(target, predicted) for target, predicted in zip(
+            [(image.cpu().numpy() * 255).astype(np.uint8) for image in images],
+            renders,
+            strict=True,
+        )]
+        iio.imwrite(
+            social_path,
+            _twitter_timeline(social_frames),
+            fps=4,
+            codec="libx264",
+            pixelformat="yuv420p",
+            macro_block_size=16,
+            output_params=["-movflags", "+faststart", "-crf", "18"],
+        )
         mean_mse = float(np.mean(heldout_mse)) if heldout_mse else float("nan")
         psnr = -10.0 * math.log10(max(mean_mse, 1e-12)) if heldout_mse else float("nan")
-        return render_path, commanded_render_path, comparison_path, {"heldout_mse": mean_mse, "heldout_psnr": psnr}
+        return (
+            render_path,
+            commanded_render_path,
+            comparison_path,
+            social_path,
+            {"heldout_mse": mean_mse, "heldout_psnr": psnr},
+        )

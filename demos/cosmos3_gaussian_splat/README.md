@@ -134,7 +134,8 @@ hf://buckets/<namespace>/<bucket>/runs/<run-id>/
 │   ├── splat.ply
 │   ├── splat.pt
 │   ├── render_orbit.mp4
-│   └── generated_vs_splat.mp4
+│   ├── generated_vs_splat.mp4
+│   └── generated-vs-splat.mp4
 └── report/
     ├── index.html
     ├── metrics.json

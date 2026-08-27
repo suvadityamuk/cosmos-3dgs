@@ -1,0 +1,11 @@
+accelerate==1.14.0
+cosmos-guardrail==0.3.1
+diffusers @ git+https://github.com/huggingface/diffusers.git@a949d3dd906528363d2b61f7f0b38abaed4169ca
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+numpy<2
+peft==0.20.0
+Pillow==12.3.0
+sentencepiece==0.2.2
+transformers==5.15.1
+torchvision==0.26.0

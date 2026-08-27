@@ -46,6 +46,7 @@ def main() -> None:
                 "run_id": result.run_id,
                 "manifest": str(result.manifest_path),
                 "splat_ply": str(result.splat_path) if result.splat_path else None,
+                "social_video": str(result.social_video) if result.social_video else None,
                 "report": str(result.report_path) if result.report_path else None,
                 "bucket_uri": result.bucket_uri,
             },
